@@ -1,0 +1,98 @@
+# Instalar ultralytics (execute apenas uma vez no ambiente Jupyter ou Colab)
+# !pip install ultralytics
+
+from ultralytics import YOLO
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+
+img = cv2.imread("AV3simples3.jpg")
+# Função de pré-processamento com as técnicas solicitadas
+def preprocess_image(img):
+    """Aplica as técnicas de:
+    1. Redução de ruído (filtro bilateral)
+    2. Morfologia matemática (abertura + fechamento)
+    3. Realce de bordas (filtro passa-alta Laplaciano)
+    """
+    # 1. Redução de ruído preservando bordas
+    denoised = cv2.bilateralFilter(img, d=9, sigmaColor=75, sigmaSpace=75)
+
+    # Converter para tons de cinza para operações morfológicas
+    gray = cv2.cvtColor(denoised, cv2.COLOR_BGR2GRAY)
+
+    # 2. Operações morfológicas
+    kernel = np.ones((3, 3), np.uint8)
+    opening = cv2.morphologyEx(gray, cv2.MORPH_OPEN, kernel)  # Remove ruídos claros
+    closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, kernel)  # Preenche pequenos buracos
+
+    # 3. Filtro passa-alta (realce de bordas)
+    laplacian = cv2.Laplacian(closing, cv2.CV_64F)
+    edge_enhanced = cv2.convertScaleAbs(laplacian)
+
+    # Combinar realce de bordas com imagem colorida original
+    edge_colored = cv2.cvtColor(edge_enhanced, cv2.COLOR_GRAY2BGR)
+    alpha = 0.7  # Peso do realce de bordas (ajustável)
+    return cv2.addWeighted(denoised, 1, edge_colored, alpha, 0)
+
+# Carregar o modelo treinado
+model = YOLO("yolo11m.pt")  # ← Substitua pelo caminho correto
+
+model.train(data="HomeObjects-3K.yaml", epochs=100, imgsz=640)
+
+# Caminho da imagem
+img_path = "AV3simples3.jpg"  # ← Substitua pela sua imagem
+
+# Carregar e pré-processar a imagem
+original_image = cv2.imread(img_path)
+processed_image = preprocess_image(original_image.copy())
+
+# Fazer a predição com a imagem pré-processada
+results = model.predict(source=processed_image, conf=0.2, verbose=False)
+
+# Processar detecções e desenhar na imagem original
+classes_alvo = ['door', 'window']
+draw_image = original_image.copy()
+
+# Criar uma camada de sobreposição para o preenchimento translúcido
+overlay = draw_image.copy()
+alpha = 1  # Transparência do preenchimento (0 = transparente, 1 = opaco)
+
+for r in results:
+    for box in r.boxes:
+        cls_id = int(box.cls[0])
+        label = model.names[cls_id]
+
+        if label in classes_alvo:
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+
+            # Preencher a bounding box com verde translúcido
+            cv2.rectangle(overlay, (x1, y1), (x2, y2), (0, 255, 0), -1)  # -1 = preenchimento completo
+
+            # Adicionar contorno e texto
+            cv2.rectangle(draw_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(draw_image, label, (x1, y1 - 10),
+             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+# Combinar a sobreposição com a imagem original
+result_image = cv2.addWeighted(overlay, alpha, draw_image, 1 - alpha, 0)
+
+# Visualização comparativa
+plt.figure(figsize=(15, 10))
+
+# Imagem original
+plt.subplot(1, 2, 1)
+plt.imshow(cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB))
+plt.title("Imagem Original")
+plt.axis('off')
+
+# Imagem processada com detecções
+plt.subplot(1, 2, 2)
+plt.imshow(cv2.cvtColor(result_image, cv2.COLOR_BGR2RGB))
+plt.title("Detecções com Preenchimento")
+plt.axis('off')
+
+plt.tight_layout()
+plt.show()
+
+# Opcional: Salvar resultado
+# cv2.imwrite("resultado.jpg", result_image)
